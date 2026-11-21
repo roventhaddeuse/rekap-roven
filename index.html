@@ -218,10 +218,28 @@ input[type="date"].fld::-webkit-date-and-time-value { text-align: left; }
     } catch (e) { return { mime: file.type || 'image/jpeg', data: await toB64(file) }; }
   }
   const err = (code, msg) => Object.assign(new Error(msg || code), { code, userMsg: msg });
+  const wait = (ms, signal) => new Promise((res, rej) => { const t = setTimeout(res, ms); if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(err('cancelled')); }, { once: true }); });
+  const FALLBACK = ['gemini-flash-latest', 'gemini-2.5-flash', 'gemini-flash-lite-latest', 'gemini-2.5-flash-lite'];
   async function askGemini(prompt, img, signal) {
+    const first = (ls.get(KEY_MODEL) || 'gemini-flash-latest').trim();
+    const models = [first].concat(FALLBACK.filter((m) => m !== first));
+    let last = null;
+    for (const model of models) {
+      for (let t = 0; t < 2; t++) {
+        try { return await askOnce(prompt, img, signal, model); }
+        catch (e) {
+          last = e;
+          if (!e.retry) throw e;
+          if (window.__rekapProgress) window.__rekapProgress(0, 0, 'Gemini sibuk, mencoba lagi…');
+          await wait(t === 0 ? 2500 : 6000, signal);
+        }
+      }
+    }
+    throw err('busy', 'Gemini sedang sibuk (server Google penuh). Tunggu beberapa menit lalu coba lagi.');
+  }
+  async function askOnce(prompt, img, signal, model) {
     const key = (ls.get(KEY_API) || '').trim();
     if (!key) throw err('no_key', 'Kunci Gemini belum diisi. Isi dulu di bagian Pengaturan di bawah.');
-    const model = (ls.get(KEY_MODEL) || 'gemini-flash-latest').trim();
     let r;
     try {
       r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + encodeURIComponent(model) + ':generateContent', {
@@ -232,10 +250,12 @@ input[type="date"].fld::-webkit-date-and-time-value { text-align: left; }
     let j = null; try { j = await r.json(); } catch (e) { j = null; }
     if (!r.ok) {
       const m = (j && j.error && j.error.message) || '';
+      if (r.status === 429 && !/per day|daily|PerDay/i.test(m)) throw Object.assign(err('quota', 'Batas per menit'), { retry: true });
       if (r.status === 429) throw err('quota', 'Kuota gratis Gemini habis untuk saat ini. Coba lagi beberapa menit lagi, atau besok.');
       if (r.status === 400 && /api key/i.test(m)) throw err('key', 'Kunci Gemini tidak valid. Periksa lagi kunci di Pengaturan.');
       if (r.status === 403) throw err('key', 'Kunci Gemini ditolak. Pastikan kunci benar dan Gemini API aktif di akun Google Anda.');
-      if (r.status === 404) throw err('model', 'Model "' + model + '" tidak ditemukan. Ganti nama model di Pengaturan.');
+      if (r.status === 404) throw Object.assign(err('model', 'Model "' + model + '" tidak ditemukan. Ganti nama model di Pengaturan.'), { retry: true });
+      if (r.status === 503 || r.status === 500 || r.status === 502 || r.status === 504) throw Object.assign(err('busy', 'Gemini sibuk'), { retry: true });
       throw err('api', 'Gemini menolak permintaan (' + r.status + '). ' + m.slice(0, 140));
     }
     const txt = ((((j || {}).candidates || [])[0] || {}).content || {}).parts ? j.candidates[0].content.parts.map((p) => p.text || '').join('') : '';
@@ -677,7 +697,7 @@ input[type="date"].fld::-webkit-date-and-time-value { text-align: left; }
     try { lim = await sample.limits(); } catch (e) { lim = null; }
     const list = Array.from(files).slice(0, lim.images.maxCount);
     sc.phase = 'busy'; sc.files = list.length; S.prog = ''; render();
-    window.__rekapProgress = (i, n) => { S.prog = n > 1 ? 'Foto ' + i + ' dari ' + n : ''; if (S.tab === 'foto' && S.scan.phase === 'busy') render(); };
+    window.__rekapProgress = (i, n, msg) => { S.prog = msg || (n > 1 ? 'Foto ' + i + ' dari ' + n : ''); if (S.tab === 'foto' && S.scan.phase === 'busy') render(); };
     ctrl = new AbortController();
     const names = S.toko.map((t) => t.toko).join('\n');
     const alias = Object.entries(S.alias).map(([a, b]) => a + ' => ' + b).join('\n');

@@ -1,5 +1,5 @@
 // Simpan salinan app supaya tetap terbuka tanpa sinyal. Halaman selalu dicoba ambil versi terbaru dulu.
-const C = 'rekap-roven-v1';
+const C = 'rekap-roven-v2';
 const FILES = ['./', './index.html', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
   'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(C).then((c) => c.addAll(FILES)).catch(() => {})); self.skipWaiting(); });
